@@ -1,0 +1,257 @@
+name: deploysapp-security-test
+
+networks:
+  attacker-net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24
+  platform-net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/24
+  tenant-net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.29.0.0/24
+  internal-net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.31.0.0/24
+
+volumes:
+  db-data:
+  pgadmin-data:
+  reports-raw:
+  traefik-logs:
+
+services:
+
+  # ─────────────────────────────────────────────
+  # PLATFORM PLANE
+  # ─────────────────────────────────────────────
+
+  traefik:
+    image: traefik:v3.1
+    container_name: dst-traefik
+    ports:
+      - "8180:80"
+      - "8143:443"
+      - "8181:8080"      # dashboard — protected by BasicAuth in config
+    volumes:
+      - ./platform/traefik/traefik.yml:/etc/traefik/traefik.yml:ro
+      - ./platform/traefik/dynamic:/etc/traefik/dynamic:ro
+      - ./platform/traefik/certs:/certs:ro
+      - traefik-logs:/logs
+    networks:
+      - attacker-net
+      - platform-net
+      - tenant-net
+    restart: unless-stopped
+
+  auth-service:
+    build: ./platform/auth-service
+    container_name: dst-auth
+    environment:
+      - JWT_SECRET=${JWT_SECRET}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD}
+    networks:
+      - platform-net
+    restart: unless-stopped
+
+  secrets-manager:
+    build: ./platform/secrets-manager
+    container_name: dst-secrets
+    environment:
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - API_KEY=${API_KEY}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+    networks:
+      - platform-net
+    restart: unless-stopped
+
+  # ─────────────────────────────────────────────
+  # TENANT PLANE (user-deployed services)
+  # ─────────────────────────────────────────────
+
+  vulnerable-webapp:
+    build: ./targets/vulnerable-webapp
+    container_name: dst-webapp
+    environment:
+      - SECRET_KEY=${WEBAPP_SECRET_KEY}
+      - DB_HOST=internal-db
+      - DB_USER=dbuser
+      - DB_PASS=${POSTGRES_PASSWORD}
+      - DB_NAME=appdb
+      - DEBUG=True
+      - INTERNAL_SERVICE_URL=http://internal-service:9000
+    # No resource limits intentionally — tests DoS impact
+    # cpus and mem_limit are set to demonstrate misconfiguration
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.webapp.rule=Host(`webapp.localhost`)"
+      - "traefik.http.routers.webapp.entrypoints=web"
+      - "traefik.http.services.webapp.loadbalancer.server.port=5000"
+    networks:
+      - tenant-net
+    restart: unless-stopped
+
+  vulnerable-api:
+    build: ./targets/vulnerable-api
+    container_name: dst-api
+    environment:
+      - JWT_SECRET=${JWT_SECRET}
+      - DB_HOST=internal-db
+      - DB_PASS=${POSTGRES_PASSWORD}
+      - NODE_ENV=production
+      - DEBUG_ENABLED=true
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.api.rule=Host(`api.localhost`)"
+      - "traefik.http.routers.api.entrypoints=web"
+      - "traefik.http.services.api.loadbalancer.server.port=3000"
+    networks:
+      - tenant-net
+    restart: unless-stopped
+
+  internal-db:
+    build: ./targets/internal-db
+    container_name: dst-db
+    environment:
+      - POSTGRES_USER=dbuser
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=appdb
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    # Intentionally no Traefik label — should not be reachable from outside tenant-net
+    networks:
+      - tenant-net
+    restart: unless-stopped
+
+  # ─────────────────────────────────────────────
+  # INTERNAL PLANE (should NEVER be reachable from attacker-net)
+  # ─────────────────────────────────────────────
+
+  internal-service:
+    build: ./targets/internal-service
+    container_name: dst-internal
+    environment:
+      - INTERNAL_API_KEY=int-key-9999
+      - DB_PASSWORD=${POSTGRES_PASSWORD}
+    # NO traefik labels — protected only by network isolation
+    networks:
+      - internal-net
+      - tenant-net    # connected to tenant-net so SSRF tests can attempt to reach it
+    restart: unless-stopped
+
+  metadata-mock:
+    build: ./targets/metadata-mock
+    container_name: dst-metadata
+    hostname: metadata.internal
+    # Simulates AWS EC2 instance metadata service
+    networks:
+      - internal-net
+      - tenant-net    # reachable from tenant-net to test SSRF chain
+    restart: unless-stopped
+
+  # ─────────────────────────────────────────────
+  # ATTACKER PLANE — only start with: docker compose --profile attack up
+  # ─────────────────────────────────────────────
+
+  nmap-scanner:
+    build: ./attackers/nmap-scanner
+    container_name: dst-nmap
+    profiles: ["attack"]
+    volumes:
+      - reports-raw:/reports
+    networks:
+      - attacker-net
+      - tenant-net    # insider threat: tenant trying to enumerate peers
+
+  zap-scanner:
+    image: ghcr.io/zaproxy/zaproxy:stable
+    container_name: dst-zap
+    profiles: ["attack"]
+    command: >
+      zap.sh -cmd
+      -autorun /zap/config/zap-full-scan.yaml
+    volumes:
+      - ./attackers/zap-scanner:/zap/config:ro
+      - reports-raw:/reports
+    environment:
+      - ZAP_TARGET_WEBAPP=http://traefik:80
+    networks:
+      - attacker-net
+    depends_on:
+      - traefik
+
+  nuclei-scanner:
+    build: ./attackers/nuclei-scanner
+    container_name: dst-nuclei
+    profiles: ["attack"]
+    volumes:
+      - reports-raw:/reports
+    networks:
+      - attacker-net
+    depends_on:
+      - traefik
+
+  sqlmap-scanner:
+    build: ./attackers/sqlmap-scanner
+    container_name: dst-sqlmap
+    profiles: ["attack"]
+    volumes:
+      - reports-raw:/reports
+    networks:
+      - attacker-net
+    depends_on:
+      - traefik
+
+  container-escape:
+    build: ./attackers/container-escape
+    container_name: dst-escape
+    profiles: ["attack"]
+    privileged: true        # intentional: simulates a misconfigured privileged tenant container
+    pid: host
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - reports-raw:/reports
+    environment:
+      - ENABLE_DANGEROUS_TESTS=${ENABLE_DANGEROUS_TESTS:-0}
+    networks:
+      - tenant-net
+
+  network-tester:
+    build: ./attackers/network-tester
+    container_name: dst-nettester
+    profiles: ["attack"]
+    volumes:
+      - reports-raw:/reports
+    networks:
+      - attacker-net
+      - tenant-net
+      - internal-net
+
+  dos-tester:
+    build: ./attackers/dos-tester
+    container_name: dst-dos
+    profiles: ["attack"]
+    volumes:
+      - reports-raw:/reports
+    networks:
+      - attacker-net
+    depends_on:
+      - traefik
+
+  trivy:
+    image: aquasec/trivy:latest
+    container_name: dst-trivy
+    profiles: ["attack"]
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - reports-raw:/reports
+      - ./trivy:/config:ro

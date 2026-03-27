@@ -1,0 +1,31 @@
+id: debug-endpoint-exposure
+
+info:
+  name: Debug Endpoint Exposing Environment Variables
+  author: deploysapp-sectest
+  severity: high
+  description: |
+    Checks for debug endpoints (/debug, /debug/env, /env, /_debug) that expose
+    environment variables including secrets, passwords, and API keys.
+  tags: exposure,debug,secrets,paas
+
+requests:
+  - method: GET
+    path:
+      - "{{BaseURL}}/debug"
+      - "{{BaseURL}}/debug/env"
+      - "{{BaseURL}}/env"
+      - "{{BaseURL}}/_debug"
+    headers:
+      Host: "{{Hostname}}"
+    matchers-condition: or
+    matchers:
+      - type: word
+        words:
+          - "JWT_SECRET"
+          - "DB_PASS"
+          - "API_KEY"
+          - "AWS_SECRET"
+          - "PASSWORD"
+          - "SECRET_KEY"
+        condition: or

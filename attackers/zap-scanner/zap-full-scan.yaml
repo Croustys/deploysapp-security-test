@@ -1,0 +1,38 @@
+---
+env:
+  contexts:
+    - name: "deploysapp-webapp"
+      urls:
+        - "http://traefik:80"
+      includePaths:
+        - "http://traefik:80.*"
+      sessionManagement:
+        method: "cookie"
+  parameters:
+    failOnError: false
+    progressToStdout: true
+
+jobs:
+  - type: spider
+    parameters:
+      url: "http://traefik:80"
+      requestWaitTime: 200
+      maxDuration: 5
+      maxChildren: 10
+
+  - type: passiveScan-wait
+    parameters:
+      maxDuration: 2
+
+  - type: activeScan
+    parameters:
+      maxRuleDurationInMins: 5
+      maxScanDurationInMins: 20
+      policy: "Default Policy"
+
+  - type: report
+    parameters:
+      template: "sarif-json"
+      reportDir: "/reports"
+      reportFile: "zap-report"
+      reportTitle: "Deploysapp Security Scan"

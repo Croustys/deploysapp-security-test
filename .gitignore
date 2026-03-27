@@ -1,0 +1,7 @@
+platform/traefik/certs/cert.pem
+platform/traefik/certs/key.pem
+reports/raw/*.json
+reports/raw/*.xml
+reports/html/*.html
+.env
+**/node_modules/

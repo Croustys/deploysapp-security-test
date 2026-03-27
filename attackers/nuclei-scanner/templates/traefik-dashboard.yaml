@@ -1,0 +1,30 @@
+id: traefik-dashboard-exposure
+
+info:
+  name: Traefik Dashboard Publicly Accessible Without Auth
+  author: deploysapp-sectest
+  severity: medium
+  description: |
+    Checks if the Traefik dashboard (/dashboard/) is accessible without
+    authentication. Exposed dashboards reveal all routes, services, and
+    middleware configurations.
+  tags: traefik,exposure,dashboard,paas
+
+requests:
+  - method: GET
+    path:
+      - "{{BaseURL}}/dashboard/"
+      - "{{BaseURL}}/api/rawdata"
+      - "{{BaseURL}}/api/version"
+    matchers-condition: or
+    matchers:
+      - type: word
+        words:
+          - "Traefik"
+          - "routers"
+          - "services"
+        condition: or
+      - type: status
+        status:
+          - 200
+    matchers-condition: and

@@ -1,0 +1,49 @@
+global:
+  checkNewVersion: false
+  sendAnonymousUsage: false
+
+log:
+  level: INFO
+
+accessLog:
+  filePath: /logs/access.log
+  format: json
+  fields:
+    headers:
+      defaultMode: keep
+
+api:
+  dashboard: true
+  # Dashboard is NOT insecure — protected by BasicAuth middleware in dynamic config
+
+entryPoints:
+  web:
+    address: ":80"
+    http:
+      redirections:
+        entryPoint:
+          to: websecure
+          scheme: https
+          permanent: false
+  websecure:
+    address: ":443"
+    http:
+      tls: {}
+  traefik-api:
+    address: ":8080"
+
+providers:
+  docker:
+    endpoint: "unix:///var/run/docker.sock"
+    exposedByDefault: false
+    network: tenant-net
+  file:
+    directory: /etc/traefik/dynamic
+    watch: true
+
+tls:
+  stores:
+    default:
+      defaultCertificate:
+        certFile: /certs/cert.pem
+        keyFile: /certs/key.pem

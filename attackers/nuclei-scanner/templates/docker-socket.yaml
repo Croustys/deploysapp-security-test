@@ -1,0 +1,24 @@
+id: docker-socket-exposure
+
+info:
+  name: Docker Socket or API Exposed
+  author: deploysapp-sectest
+  severity: critical
+  description: |
+    Tests for exposure of the Docker daemon API over TCP (port 2375 unencrypted,
+    2376 TLS). If accessible, an attacker can control all containers on the host.
+  tags: docker,container-escape,paas,critical
+
+requests:
+  - method: GET
+    path:
+      - "http://docker:2375/version"
+      - "http://traefik:2375/version"
+      - "http://172.28.0.1:2375/version"
+      - "http://172.29.0.1:2375/version"
+    matchers:
+      - type: word
+        words:
+          - "ApiVersion"
+          - "Version"
+        condition: and

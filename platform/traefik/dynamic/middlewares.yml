@@ -1,0 +1,56 @@
+http:
+  middlewares:
+
+    # Rate limiting — 10 req/s per IP, burst of 20
+    rate-limit:
+      rateLimit:
+        average: 10
+        burst: 20
+
+    # Security headers
+    secure-headers:
+      headers:
+        frameDeny: true
+        contentTypeNosniff: true
+        browserXssFilter: true
+        referrerPolicy: "strict-origin-when-cross-origin"
+        forceSTSHeader: true
+        stsSeconds: 31536000
+        stsIncludeSubdomains: true
+        contentSecurityPolicy: "default-src 'self'"
+        customResponseHeaders:
+          X-Powered-By: ""
+          Server: ""
+
+    # Dashboard BasicAuth — admin:admin123
+    dashboard-auth:
+      basicAuth:
+        users:
+          - "admin:$apr1$ruca84Hq$mbjdMZBAG.KWn7vfN/SNK/"
+
+    # ForwardAuth to auth-service for protected routes
+    forward-auth:
+      forwardAuth:
+        address: "http://auth-service:8081/auth/validate"
+        authResponseHeaders:
+          - "X-Auth-User"
+          - "X-Auth-Role"
+        trustForwardHeader: false
+
+    # Strip internal headers that tenants shouldn't set
+    strip-internal-headers:
+      headers:
+        customRequestHeaders:
+          X-Auth-User: ""
+          X-Auth-Role: ""
+          X-Real-IP: ""
+
+routers:
+  # Traefik dashboard — only on traefik-api entrypoint with BasicAuth
+  api:
+    rule: "PathPrefix(`/api`) || PathPrefix(`/dashboard`)"
+    entryPoints:
+      - traefik-api
+    service: api@internal
+    middlewares:
+      - dashboard-auth

