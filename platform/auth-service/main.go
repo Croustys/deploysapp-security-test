@@ -98,7 +98,7 @@ func validateHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Intentional vulnerability: accepts alg:none (for test 05-authentication/jwt-tests.sh)
 	token, err := jwt.ParseWithClaims(tokenStr, &claims{}, func(t *jwt.Token) (interface{}, error) {
-		if _, ok := t.Method.(*jwt.SigningMethodNone); ok {
+		if t.Method.Alg() == "none" {
 			return jwt.UnsafeAllowNoneSignatureType, nil
 		}
 		return jwtSecret, nil
